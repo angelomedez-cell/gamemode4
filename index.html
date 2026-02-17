@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Simple Circuit Lab</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Three.js (Kept for dependencies if needed) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;600&family=Bangers&family=Segoe+UI&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+  <style>
+    /* Global Styles */
+    html, body {
+      height: 100%;
+      overflow: hidden; 
+      background-color: #f0f9ff; /* Default Light Mode */
+      touch-action: none;
+      font-family: 'Fredoka', sans-serif;
+      user-select: none;
+    }
+    #root { height: 100%; width: 100%; display: flex; flex-direction: column; }
+
+    /* Dagitab Animation */
+    .dagitab-text {
+        font-family: 'Bangers', cursive;
+        letter-spacing: 4px;
+        -webkit-text-stroke: 2px #1e3a8a;
+        color: #facc15;
+    }
+    .dagitab-fill {
+        animation: fillUp 3s ease-in-out forwards;
+    }
+    @keyframes fillUp { 0% { height: 0%; } 100% { height: 100%; } }
+    
+    /* Confetti */
+    .confetti {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      animation: fall linear forwards;
+    }
+    @keyframes fall { to { transform: translateY(100vh) rotate(720deg); } }
+
+    /* --- GAME MODE SPECIFIC STYLES --- */
+    .game-mode-dark {
+        background-color: #1a202c;
+        color: white;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .custom-scroll::-webkit-scrollbar { width: 8px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- Global Audio (For non-game screens) ---
+    const GlobalAudio = {
+        ctx: null,
+        init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); },
+        playWin() {
+            if (!this.ctx) this.init();
+            const now = this.ctx.currentTime;
+            [523.25, 659.25, 783.99].forEach((f, i) => {
+                const o = this.ctx.createOscillator();
+                const g = this.ctx.createGain();
+                o.type = 'sine'; o.frequency.setValueAtTime(f, now + i*0.1);
+                g.gain.setValueAtTime(0.1, now + i*0.1); g.gain.exponentialRampToValueAtTime(0.001, now + i*0.1 + 0.5);
+                o.connect(g); g.connect(this.ctx.destination); o.start(now + i*0.1); o.stop(now + i*0.1 + 0.5);
+            });
+        }
+    };
+
+    // --- React Components (Light Mode Menus) ---
+
+    // 1. Dagitab Loader
+    const DagitabLoader = ({ onComplete }) => {
+        const [percent, setPercent] = useState(0);
+        useEffect(() => {
+            const interval = setInterval(() => {
+                setPercent(p => {
+                    if (p >= 100) { clearInterval(interval); setTimeout(onComplete, 500); return 100; }
+                    return p + 2;
+                });
+            }, 50);
+            return () => clearInterval(interval);
+        }, []);
+
+        return (
+            <div className="fixed inset-0 bg-blue-50 flex flex-col items-center justify-center z-[100]">
+                <div className="relative">
+                    <div className="text-8xl md:text-9xl font-bold text-gray-200 dagitab-text tracking-widest relative z-0">DAGITAB!</div>
+                    <div className="text-8xl md:text-9xl font-bold text-yellow-400 dagitab-text tracking-widest absolute top-0 left-0 overflow-hidden z-10 transition-all duration-75" style={{ height: `${percent}%` }}>DAGITAB!</div>
+                    <div className="absolute -top-10 right-0 text-6xl animate-bounce">⚡</div>
+                </div>
+                <div className="mt-8 w-64 h-4 bg-gray-200 rounded-full overflow-hidden border border-blue-200">
+                    <div className="h-full bg-yellow-400 transition-all duration-75" style={{ width: `${percent}%` }}></div>
+                </div>
+                <div className="mt-2 text-blue-600 font-mono text-sm">Initializing Simulation Modules... {percent}%</div>
+            </div>
+        );
+    };
+
+    // 2. Teacher Selection
+    const TeacherSelection = ({ onSelect }) => {
+        const teachers = [
+            { name: "Ms. Winnie", emoji: "👩‍🏫" }, { name: "Ms. Amy", emoji: "👩‍🏫" },
+            { name: "Ms. Nikka", emoji: "👩‍🏫" }, { name: "Sir Angelo", emoji: "👨‍🏫" },
+            { name: "Ms. Sparkle", emoji: "✨" }
+        ];
+        return (
+            <div className="flex flex-col items-center justify-center h-full bg-blue-50 text-slate-800 p-4 animate-fadeIn">
+                <h1 className="text-4xl md:text-5xl font-bold mb-10 text-blue-900 font-comic text-center">Who is your Teacher?</h1>
+                <div className="flex flex-wrap justify-center gap-6">
+                    {teachers.map((t) => (
+                        <button key={t.name} onClick={() => onSelect(t)} className="bg-white p-6 rounded-2xl shadow-lg border-2 border-blue-100 hover:border-blue-400 hover:shadow-xl hover:-translate-y-1 transition-all w-40 flex flex-col items-center">
+                            <div className="text-6xl mb-2">{t.emoji}</div>
+                            <div className="text-lg font-bold text-slate-700">{t.name}</div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+    };
+
+    // 3. Intro Screen
+    const Intro = ({ onStart, teacher }) => (
+        <div className="flex flex-col items-center justify-center h-full bg-blue-50 text-slate-800 p-8 text-center animate-fadeIn relative overflow-hidden">
+            <h1 className="text-5xl md:text-7xl font-bold text-blue-900 mb-6 dagitab-text drop-shadow-sm">Simple Circuit Lab</h1>
+            <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-2xl border-4 border-blue-200 z-10">
+                <p className="text-2xl mb-6 font-bold text-slate-700">Welcome, Young Lasallian Engineers! 👷</p>
+                <p className="text-lg mb-8 text-slate-600 leading-relaxed">
+                    I am <span className="text-blue-600 font-bold">{teacher ? teacher.name : "Teacher"}</span>. <br/>
+                    We have 3 modes to help you master simple circuits.<br/><br/>
+                    Complete the final challenge to become a certified Young Lasallian Electrical Engineer!
+                </p>
+                <button onClick={onStart} className="px-10 py-4 bg-green-500 hover:bg-green-600 text-white text-2xl font-bold rounded-full shadow-lg transform transition hover:scale-105">
+                    Go to Game Hub 🚀
+                </button>
+            </div>
+        </div>
+    );
+
+    // 4. Game Hub
+    const GameHub = ({ onSelectMode, mode4Completed, onGoToCert }) => {
+        // Certificate requires Mode 4 to be completed
+        const allRequiredModesCompleted = mode4Completed;
+
+        return (
+            <div className="flex flex-col items-center justify-center h-full w-full p-4 gap-6 animate-fadeIn bg-blue-50">
+                <h2 className="text-4xl font-bold text-blue-900 mb-2 font-comic text-center">Select Game Mode</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 w-full max-w-6xl">
+                    
+                    {/* Locked Mode 1 */}
+                    <div className="relative p-6 rounded-2xl border-4 border-gray-300 bg-gray-100 flex flex-col items-center justify-center gap-4 opacity-70 grayscale cursor-not-allowed">
+                        <div className="absolute top-2 right-2 text-2xl">🔒</div>
+                        <div className="text-6xl mb-2">🧰</div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-gray-500">Build a Circuit</h3>
+                            <p className="text-gray-400 text-sm">Mode 1</p>
+                        </div>
+                    </div>
+
+                    {/* Locked Mode 2 */}
+                    <div className="relative p-6 rounded-2xl border-4 border-gray-300 bg-gray-100 flex flex-col items-center justify-center gap-4 opacity-70 grayscale cursor-not-allowed">
+                        <div className="absolute top-2 right-2 text-2xl">🔒</div>
+                        <div className="text-6xl mb-2">🔌</div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-gray-500">Connected Community</h3>
+                            <p className="text-gray-400 text-sm">Mode 2</p>
+                        </div>
+                    </div>
+
+                    {/* Locked Mode 3 */}
+                    <div className="relative p-6 rounded-2xl border-4 border-gray-300 bg-gray-100 flex flex-col items-center justify-center gap-4 opacity-70 grayscale cursor-not-allowed">
+                        <div className="absolute top-2 right-2 text-2xl">🔒</div>
+                        <div className="text-6xl mb-2">⚡</div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-gray-500">Circuit Master</h3>
+                            <p className="text-gray-400 text-sm">Mode 3</p>
+                        </div>
+                    </div>
+
+                    {/* Active Mode 4 */}
+                    <button 
+                        onClick={() => onSelectMode('mode4')}
+                        className={`relative p-6 rounded-2xl border-4 shadow-xl flex flex-col items-center justify-center gap-4 transition-transform hover:scale-105 group ${mode4Completed ? 'bg-green-50 border-green-400' : 'bg-white border-yellow-400'}`}
+                    >
+                        {mode4Completed && <div className="absolute top-2 right-2 text-2xl bg-green-200 rounded-full p-1">✅</div>}
+                        <div className="text-6xl group-hover:animate-bounce mb-2">🏆</div>
+                        <div className="text-center">
+                            <h3 className="text-xl font-bold text-slate-800">Circuit to Win It!</h3>
+                            <p className="text-slate-500 text-sm">Mode 4 (Open)</p>
+                            <span className={`inline-block mt-2 text-white text-xs font-bold px-3 py-1 rounded-full ${mode4Completed ? 'bg-green-600' : 'bg-yellow-500'}`}>
+                                {mode4Completed ? 'PLAY AGAIN' : 'PLAY NOW'}
+                            </span>
+                        </div>
+                    </button>
+                </div>
+
+                <div className="mt-8 border-t-2 border-blue-200 pt-6 w-full max-w-lg text-center">
+                    <button 
+                        onClick={onGoToCert}
+                        disabled={!allRequiredModesCompleted}
+                        className={`px-10 py-4 rounded-full text-2xl font-bold shadow-xl transition-all transform ${allRequiredModesCompleted ? 'bg-green-500 text-white hover:scale-105 hover:bg-green-600 animate-pulse' : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-50'}`}
+                    >
+                        {allRequiredModesCompleted ? "Continue 🎓" : "Complete Mode 4 to Unlock"}
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    // 5. Certificate (Split View)
+    const Certificate = ({ teacher, onRestart }) => {
+        const [studentName, setStudentName] = useState("");
+        const [section, setSection] = useState("");
+
+        useEffect(() => { GlobalAudio.playWin(); }, []);
+        
+        return (
+             <div className="flex flex-col md:flex-row items-center justify-center h-full bg-blue-50 p-4 animate-fadeIn relative overflow-hidden gap-8">
+                {Array.from({length: 50}).map((_,i) => <div key={i} className="confetti" style={{left: `${Math.random()*100}%`, animationDuration: `${2+Math.random()*3}s`, backgroundColor: ['#f00','#0f0','#00f','#ff0'][Math.floor(Math.random()*4)]}}></div>)}
+                
+                {/* Left Panel: Inputs */}
+                <div className="flex flex-col gap-6 w-full max-w-md z-20 bg-white/80 backdrop-blur p-6 rounded-2xl shadow-xl border-2 border-blue-200">
+                    <div>
+                        <h2 className="text-2xl font-bold text-blue-900 mb-2 font-comic">Almost Done!</h2>
+                        <p className="text-slate-600 text-sm">Enter your details below to personalize your certificate.</p>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-slate-500 text-xs font-bold uppercase mb-1">Student Name</label>
+                            <input 
+                                type="text" 
+                                placeholder="Type your name..." 
+                                value={studentName} 
+                                onChange={(e) => setStudentName(e.target.value)}
+                                className="w-full p-3 rounded-lg border-2 border-blue-200 shadow-sm focus:border-blue-500 outline-none font-bold text-slate-800 text-lg"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-slate-500 text-xs font-bold uppercase mb-1">Section / Grade</label>
+                            <input 
+                                type="text" 
+                                placeholder="Type your section..." 
+                                value={section} 
+                                onChange={(e) => setSection(e.target.value)}
+                                className="w-full p-3 rounded-lg border-2 border-blue-200 shadow-sm focus:border-blue-500 outline-none font-bold text-slate-800 text-lg"
+                            />
+                        </div>
+                    </div>
+
+                    <button onClick={onRestart} className="mt-2 w-full px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-lg shadow-lg transition-transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2">
+                         <span>🔄</span> Back to Start
+                    </button>
+                </div>
+
+                {/* Right Panel: Certificate Preview */}
+                <div className="relative z-10 w-full max-w-3xl transform hover:scale-[1.02] transition-transform duration-500">
+                    <div className="bg-white text-slate-900 p-8 md:p-12 rounded-xl shadow-2xl border-[12px] border-yellow-400 w-full text-center relative overflow-hidden">
+                        {/* Decorative Corner */}
+                        <div className="absolute top-0 right-0 p-4">
+                            <div className="text-6xl opacity-20 rotate-12">🏆</div>
+                        </div>
+
+                        <h1 className="text-3xl md:text-5xl font-bold text-slate-800 mb-2 font-comic">Certificate of Mastery</h1>
+                        <p className="text-slate-500 mb-8 text-sm md:text-lg font-bold uppercase tracking-widest">Young Lasallian Electrical Engineers</p>
+                        
+                        <p className="text-base md:text-xl text-slate-600 mb-2 italic">This certifies that</p>
+                        
+                        <div className="text-2xl md:text-5xl font-bold text-blue-600 border-b-4 border-slate-200 pb-2 mb-2 font-comic min-h-[60px] uppercase break-words px-4">
+                            {studentName || "Future Scientist"}
+                        </div>
+                        <div className="text-slate-500 text-lg md:text-xl mb-8 font-bold">{section || "Grade 5 Science"}</div>
+
+                        <p className="text-base md:text-lg text-slate-600 mb-10 leading-relaxed">
+                            For successfully mastering the concept of Conductors and Insulators.
+                        </p>
+                        
+                        <div className="flex justify-between px-4 md:px-12 mt-8 text-left items-end">
+                            <div className="flex flex-col items-center">
+                                <div className="font-script text-xl md:text-3xl text-blue-600 font-bold font-cursive" style={{fontFamily: 'cursive'}}>{teacher ? teacher.name : "Teacher"}</div>
+                                <div className="text-xs text-slate-400 border-t border-slate-300 pt-2 w-32 md:w-48 text-center mt-1">Lab Director</div>
+                            </div>
+                            <div className="flex flex-col items-center">
+                                <div className="font-bold text-slate-600 text-lg md:text-xl">{new Date().toLocaleDateString()}</div>
+                                <div className="text-xs text-slate-400 border-t border-slate-300 pt-2 w-32 md:w-48 text-center mt-1">Date</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+             </div>
+        );
+    };
+
+    // --- GAME MODE: Iframe Game (Dark Mode) ---
+    const IframeGame = ({ mode, onComplete, onBack }) => {
+        const iframeRef = useRef(null);
+
+        useEffect(() => {
+            const handleMessage = (event) => {
+                // Highly robust message listener to capture any indication of "completion"
+                try {
+                    let isDone = false;
+                    const data = event.data;
+                    
+                    if (typeof data === 'string') {
+                        const msg = data.toLowerCase();
+                        if (msg.includes('complete') || msg.includes('finish') || msg.includes('done') || msg.includes('close')) {
+                            isDone = true;
+                        }
+                    } else if (data && typeof data === 'object') {
+                        if (
+                            data.type === 'complete' || 
+                            data.type === 'finish' || 
+                            data.action === 'complete' ||
+                            data.message === 'game_over'
+                        ) {
+                            isDone = true;
+                        }
+                    }
+
+                    if (isDone) {
+                        console.log("Game completion signal received from iframe.");
+                        onComplete();
+                    }
+                } catch (e) {
+                    console.error("Error parsing message from iframe", e);
+                }
+            };
+            
+            window.addEventListener("message", handleMessage);
+            return () => window.removeEventListener("message", handleMessage);
+        }, [onComplete]);
+
+        // Configuration for Mode 4
+        let title = "Mode 4: Circuit to Win It!";
+        let srcUrl = "https://angelomedez-cell.github.io/circuittowinit/";
+        
+        // Skip Button Logic
+        const handleSkipToLevel20 = () => {
+            if (iframeRef.current) {
+                iframeRef.current.contentWindow.postMessage("level20", "*");
+            }
+        };
+
+        return (
+            <div className="relative w-full h-full bg-gray-900 game-mode-dark flex flex-col">
+                <div className="flex justify-between items-center p-4 bg-gray-800 border-b border-gray-700 z-50">
+                    <button onClick={onBack} className="bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-500 hover:bg-gray-600 flex items-center gap-2 transition-colors">
+                         <span>⬅️</span> Game Modes
+                    </button>
+                    <div className="text-gray-300 font-bold tracking-widest uppercase text-sm">{title}</div>
+                    
+                    {/* Test Button for Mode 4 (Debug) */}
+                    <div className="flex items-center">
+                         <button 
+                            onClick={handleSkipToLevel20} 
+                            className="bg-yellow-600/80 text-yellow-100 text-xs px-3 py-2 rounded border border-yellow-500 hover:bg-yellow-500 font-bold mr-2 transition-colors hidden" // Hidden by default, can remove hidden class to debug
+                            title="Debug: Jump to Level 20 in game"
+                         >
+                            Skip to Level 20
+                         </button>
+                        <div className="w-4"></div>
+                    </div> 
+                </div>
+
+                <div className="flex-1 relative w-full h-full">
+                    <iframe 
+                        ref={iframeRef}
+                        src={srcUrl} 
+                        className="w-full h-full border-0"
+                        title={title}
+                        allow="autoplay; fullscreen"
+                    ></iframe>
+                </div>
+            </div>
+        );
+    };
+
+    // --- APP ORCHESTRATOR ---
+    const App = () => {
+        // Views: loader -> teacher -> intro -> hub -> game(iframe) -> cert
+        const [view, setView] = useState('loader');
+        const [teacher, setTeacher] = useState(null);
+        const [mode4Done, setMode4Done] = useState(false);
+        const [playingMode, setPlayingMode] = useState(null);
+
+        const handleGameComplete = () => {
+            if (playingMode === 'mode4') setMode4Done(true);
+            setView('hub');
+        };
+
+        const handleSelectMode = (mode) => {
+            setPlayingMode(mode);
+            setView('game');
+        };
+
+        return (
+            <>
+                {view === 'loader' && <DagitabLoader onComplete={() => setView('teacher')} />}
+                {view === 'teacher' && <TeacherSelection onSelect={(t) => { setTeacher(t); setView('intro'); }} />}
+                {view === 'intro' && <Intro teacher={teacher} onStart={() => setView('hub')} />}
+                
+                {view === 'hub' && (
+                    <GameHub 
+                        onSelectMode={handleSelectMode} 
+                        mode4Completed={mode4Done}
+                        onGoToCert={() => setView('cert')}
+                    />
+                )}
+                
+                {view === 'game' && <IframeGame mode={playingMode} onComplete={handleGameComplete} onBack={() => setView('hub')} />}
+                
+                {view === 'cert' && <Certificate teacher={teacher} onRestart={() => { setMode4Done(false); setView('hub'); }} />}
+            </>
+        );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
